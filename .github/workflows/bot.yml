@@ -1,14 +1,20 @@
 name: mm
 
-# Manual dispatch only. Default mode = status (read-only). Inert until the repo
-# secrets below are set. Live trading requires choosing mode=live explicitly.
-
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "status | dry | live"
+        description: "status | dry | live | flatten"
         default: "status"
+      qty:
+        description: "contracts per order (live)"
+        default: "1"
+      max_usd:
+        description: "total exposure cap $ (live)"
+        default: "5"
+      minutes:
+        description: "loop duration in minutes (live)"
+        default: "60"
 
 concurrency:
   group: mm
@@ -36,16 +42,18 @@ jobs:
           KALSHI_API_KEY_ID: ${{ secrets.KALSHI_API_KEY_ID }}
           KALSHI_PRIVATE_KEY_PATH: kalshi_key.pem
           MM_SERIES: ${{ secrets.MM_SERIES }}
-          MM_QTY: "5"
-          MM_MAX_USD: "40"
+          MM_QTY: ${{ github.event.inputs.qty || '1' }}
+          MM_MAX_USD: ${{ github.event.inputs.max_usd || '5' }}
           MM_SKEW: "0.3"
-          LOOP_MAX_MINUTES: "350"
+          LOOP_MAX_MINUTES: ${{ github.event.inputs.minutes || '60' }}
         run: |
           MODE="${{ github.event.inputs.mode }}"
           if [ "$MODE" = "live" ]; then
             LIVE=1 python -m mm.bot --live
           elif [ "$MODE" = "dry" ]; then
             python -m mm.bot --dry
+          elif [ "$MODE" = "flatten" ]; then
+            python -m mm.bot --flatten
           else
             python -m mm.bot --status
           fi
