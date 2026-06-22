@@ -245,7 +245,10 @@ def cmd_status():
     if not SERIES:
         print("set MM_SERIES (target series ticker) via env/secret."); return
     c = client()
-    print(f"balance: {_money(balance(c))}")
+    b = c.balance()
+    authed = isinstance(b, dict) and "balance_dollars" in b
+    print(f"auth: {'OK' if authed else 'FAILED -> ' + str(b)[:200]}")
+    print(f"balance: {_money(_f(b.get('balance_dollars'), 0.0) or 0.0) if authed else 'n/a'}")
     cands = discover(c)
     print(f"ATM strikes: {[_mask(m['ticker']) for m in cands]}")
     for m in cands:
