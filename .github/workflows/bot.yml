@@ -1,0 +1,51 @@
+name: mm
+
+# Manual dispatch only. Default mode = status (read-only). Inert until the repo
+# secrets below are set. Live trading requires choosing mode=live explicitly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "status | dry | live"
+        default: "status"
+
+concurrency:
+  group: mm
+  cancel-in-progress: false
+
+jobs:
+  mm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: write key
+        env:
+          K: ${{ secrets.KALSHI_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$K" > kalshi_key.pem
+          chmod 600 kalshi_key.pem
+      - name: run
+        env:
+          KALSHI_API_KEY_ID: ${{ secrets.KALSHI_API_KEY_ID }}
+          KALSHI_PRIVATE_KEY_PATH: kalshi_key.pem
+          MM_SERIES: ${{ secrets.MM_SERIES }}
+          MM_QTY: "5"
+          MM_MAX_USD: "40"
+          MM_SKEW: "0.3"
+          LOOP_MAX_MINUTES: "350"
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ "$MODE" = "live" ]; then
+            LIVE=1 python -m mm.bot --live
+          elif [ "$MODE" = "dry" ]; then
+            python -m mm.bot --dry
+          else
+            python -m mm.bot --status
+          fi
