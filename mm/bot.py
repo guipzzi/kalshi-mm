@@ -63,6 +63,23 @@ def _mask(t):
     return f"{t[:2]}…{t[-2:]}" if len(t) > 4 else "***"
 
 
+# Public-log safety: by default NEVER print account $ (balance / PnL / exposure)
+# or inventory size. Set MM_MASK_USD=0 (e.g. local/private run) to see real figures.
+MASK_USD = os.getenv("MM_MASK_USD", "1") == "1"
+
+
+def _money(x, signed=False):
+    if MASK_USD:
+        return "$•••"
+    return f"${x:+.2f}" if signed else f"${x:.2f}"
+
+
+def _invs(n):
+    if not MASK_USD:
+        return str(n)
+    return "flat" if n == 0 else ("long" if n > 0 else "short")
+
+
 def client():
     return KalshiClient(env="prod")
 
@@ -174,7 +191,7 @@ def step(c, dry, budget):
         for o in desired_quotes(m, inv):
             cost = o["px_cost"] * QTY
             if spent + cost > budget:
-                print(f"   [exposure cap ${budget:.0f}] skip {_mask(m['ticker'])} {o['side']}")
+                print(f"   [exposure cap {_money(budget)}] skip {_mask(m['ticker'])} {o['side']}")
                 continue
             spent += cost
             tag = f"{_mask(m['ticker'])} buy {o['side']} {QTY}@{_c(o['price'])}c (${o['px_cost']:.2f})"
@@ -188,7 +205,7 @@ def step(c, dry, budget):
                     expiration_ts=int(time.time()) + ORDER_EXPIRY_S, **px)
                 ok = isinstance(res, dict) and not res.get("_http_error") and not res.get("_error")
                 print(f"   [LIVE] {tag} -> {'ok' if ok else res}")
-    print(f"   exposure posted this round: ~${spent:.2f}")
+    print(f"   exposure posted this round: ~{_money(spent)}")
     return spent
 
 
@@ -199,19 +216,19 @@ def run_loop(dry):
     bal = balance(c)
     budget = min(MAX_EXPOSURE_USD, bal if not dry else MAX_EXPOSURE_USD)
     print("=" * 64)
-    print(f"MM {_mask(SERIES)} | mode={'DRY-RUN' if dry else 'LIVE — REAL MONEY'} | balance ${bal:.2f}")
-    print(f"qty {QTY} | inv cap ±{INV_CAP} | strikes<= {MAX_STRIKES} | exposure<= ${budget:.0f} | "
+    print(f"MM {_mask(SERIES)} | mode={'DRY-RUN' if dry else 'LIVE — REAL MONEY'} | balance {_money(bal)}")
+    print(f"qty {QTY} | inv cap ±{INV_CAP} | strikes<= {MAX_STRIKES} | exposure<= {_money(budget)} | "
           f"skew {SKEW_MULT} | kill if loss > ${KILL_LOSS_USD}")
     print("=" * 64)
     if not dry and bal < 1.0:
-        print(f"\n  !! balance ${bal:.2f} insufficient. Deposit and restart."); return
+        print("\n  !! balance insufficient (< $1). Deposit and restart."); return
     deadline = time.time() + int(os.getenv("LOOP_MAX_MINUTES", "350")) * 60
     while time.time() < deadline:
         try:
             if not dry:
                 pnl = realized_today(c)
                 if pnl <= -abs(KILL_LOSS_USD):
-                    print(f"\n  !! KILL SWITCH: day loss ${pnl:.2f} <= -${KILL_LOSS_USD}. "
+                    print(f"\n  !! KILL SWITCH: day loss {_money(pnl, signed=True)} <= -${KILL_LOSS_USD}. "
                           f"Cancelling + flattening.")
                     cancel_all(c, dry=False)
                     return
@@ -228,13 +245,13 @@ def cmd_status():
     if not SERIES:
         print("set MM_SERIES (target series ticker) via env/secret."); return
     c = client()
-    print(f"balance: ${balance(c):.2f}")
+    print(f"balance: {_money(balance(c))}")
     cands = discover(c)
     print(f"ATM strikes: {[_mask(m['ticker']) for m in cands]}")
     for m in cands:
-        print(f"  {_mask(m['ticker'])}: inv {inventory(c, m['ticker'])} | bid/ask {m['bid']}/{m['ask']}")
+        print(f"  {_mask(m['ticker'])}: inv {_invs(inventory(c, m['ticker']))} | bid/ask {m['bid']}/{m['ask']}")
     print(f"resting orders: {len(resting(c))}")
-    print(f"realized PnL TODAY: ${realized_today(c):+.2f}")
+    print(f"realized PnL TODAY: {_money(realized_today(c), signed=True)}")
 
 
 def cmd_flatten():
