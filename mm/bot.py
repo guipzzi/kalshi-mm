@@ -40,7 +40,9 @@ MAX_EXPOSURE_USD = float(os.getenv("MM_MAX_USD", "40"))   # total collateral cap
 ATM_LO, ATM_HI = 0.15, 0.85
 SKEW_MULT = float(os.getenv("MM_SKEW", "0.3"))       # inventory skew (anchor)
 QUOTE_UNTIL_S = int(os.getenv("MM_QUOTE_UNTIL_S", "1800"))
-ORDER_EXPIRY_S = int(os.getenv("MM_ORDER_EXPIRY_S", "90"))   # auto-cancel if bot dies
+ORDER_EXPIRY_S = int(os.getenv("MM_ORDER_EXPIRY_S", "300"))  # auto-cancel if bot dies; longer = holds queue
+MIN_SPREAD = float(os.getenv("MM_MIN_SPREAD", "0"))          # only quote if (ask-bid) >= this ($); 0 = no filter
+REQUOTE_REFRESH_S = int(os.getenv("MM_REQUOTE_REFRESH_S", "240"))  # renew a resting order every X s (< expiry)
 # --- risk ---
 KILL_LOSS_USD = float(os.getenv("MM_KILL_LOSS", "15"))      # stop the day on this loss
 STEP_S = int(os.getenv("MM_STEP_S", "30"))
@@ -179,33 +181,62 @@ def realized_today(c):
     return tot
 
 
+# no-churn state: last quote "signature" per strike, to preserve queue priority
+_LAST = {}
+
+
 def step(c, dry, budget):
+    """No-churn quoting: leave resting orders in place to build queue priority;
+    only (re)quote a strike when its target price moves, it's newly in range, or the
+    resting order is due for renewal. The 30s/order churn was resetting queue position
+    every round — this holds it so passive orders actually reach the front and fill."""
     cands = discover(c)
+    cur = {m["ticker"]: m for m in cands}
+    for t in list(_LAST):                         # strikes that left ATM range -> cancel
+        if t not in cur:
+            cancel_all(c, dry, ticker=t)
+            _LAST.pop(t, None)
     if not cands:
         print("   no ATM strikes right now."); return 0.0
-    cancel_all(c, dry)                   # cancel stale orders, re-quote fresh
-    if not dry:
-        time.sleep(0.4)
+    now = time.time()
     spent = 0.0
+    requoted = kept = 0
     for m in cands:
-        inv = 0 if dry else inventory(c, m["ticker"])
+        t = m["ticker"]
+        if (m["ask"] - m["bid"]) < MIN_SPREAD:     # spread too thin to profit -> don't quote
+            if t in _LAST:
+                cancel_all(c, dry, ticker=t); _LAST.pop(t, None)
+            print(f"   [spread {(m['ask']-m['bid'])*100:.0f}c < {MIN_SPREAD*100:.0f}c] skip {_mask(t)}")
+            continue
+        inv = 0 if dry else inventory(c, t)
+        orders = []
         for o in desired_quotes(m, inv):
-            cost = o["px_cost"] * QTY
-            if spent + cost > budget:
-                print(f"   [exposure cap {_money(budget)}] skip {_mask(m['ticker'])} {o['side']}")
+            if spent + o["px_cost"] * QTY > budget:
                 continue
-            spent += cost
-            tag = f"{_mask(m['ticker'])} {o['side']} {QTY}@{_c(o['price'])}c (${o['px_cost']:.2f})"
+            spent += o["px_cost"] * QTY
+            orders.append(o)
+        sig = tuple((o["side"], _c(o["price"])) for o in orders)
+        prev = _LAST.get(t)
+        if prev and prev["sig"] == sig and (now - prev["ts"]) <= REQUOTE_REFRESH_S:
+            kept += 1                              # unchanged & fresh -> leave it in the queue
+            continue
+        requoted += 1
+        cancel_all(c, dry, ticker=t)               # price moved / renewal -> requote this strike only
+        if not dry and orders:
+            time.sleep(0.2)
+        for o in orders:
+            tag = f"{_mask(t)} {o['side']} {QTY}@{_c(o['price'])}c (${o['px_cost']:.2f})"
             if dry:
                 print(f"   [dry] would post MAKER (expires {ORDER_EXPIRY_S}s): {tag}")
             else:
                 res = c.create_order(
-                    ticker=m["ticker"], side=o["side"], count=QTY, price=o["price"],
+                    ticker=t, side=o["side"], count=QTY, price=o["price"],
                     post_only=True, client_order_id=f"mm-{int(time.time()*1000)}-{o['side']}",
-                    expiration_ts=int(time.time()) + ORDER_EXPIRY_S)
+                    expiration_ts=int(now) + ORDER_EXPIRY_S)
                 ok = isinstance(res, dict) and not res.get("_http_error") and not res.get("_error")
                 print(f"   [LIVE] {tag} -> {'ok' if ok else res}")
-    print(f"   exposure posted this round: ~{_money(spent)}")
+        _LAST[t] = {"sig": sig, "ts": now}
+    print(f"   {requoted} requoted, {kept} held in queue | exposure ~{_money(spent)}")
     return spent
 
 
