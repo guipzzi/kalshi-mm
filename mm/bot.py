@@ -222,6 +222,18 @@ def held(c):
     return n
 
 
+def fills_count(c):
+    """GROSS fills in the recent batch for SERIES. Distinguishes 'nothing is filling'
+    (stays 0) from balanced round-trips that net to flat inventory (grows even while
+    held stays 0). The signal that resolves a held=0 reading."""
+    try:
+        r = c.fills(limit=200)
+        items = r.get("fills", []) if isinstance(r, dict) else []
+    except Exception:
+        return 0
+    return sum(1 for f in items if SERIES in (f.get("ticker") or ""))
+
+
 def run_loop(dry):
     if not SERIES:
         print("set MM_SERIES (target series ticker) via env/secret."); return
@@ -247,8 +259,8 @@ def run_loop(dry):
                     return
             print(f"\n[{dt.datetime.now().strftime('%H:%M:%S')}]", flush=True)
             if not dry:
-                print(f"   held: {held(c)} strikes filled | resting: {len(resting(c))} | "
-                      f"day PnL: {_money(pnl, signed=True)}", flush=True)
+                print(f"   held: {held(c)} | fills(recent): {fills_count(c)} | "
+                      f"resting: {len(resting(c))} | day PnL: {_money(pnl, signed=True)}", flush=True)
             step(c, dry, budget)
         except Exception as e:
             print(f"   ! error: {e}", flush=True)
