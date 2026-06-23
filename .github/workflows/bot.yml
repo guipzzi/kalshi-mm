@@ -2,7 +2,7 @@ name: mm
 
 on:
   schedule:
-    - cron: "0 */6 * * *"        # 4x/dia; loop de ~5h50 emenda quase contínuo
+    - cron: "23 */6 * * *"       # 00:23, 06:23, 12:23, 18:23 UTC — fora da hora cheia (mais confiável)
   workflow_dispatch:
     inputs:
       mode:
@@ -20,7 +20,7 @@ on:
 
 concurrency:
   group: mm
-  cancel-in-progress: false       # evita matar um run rodando por engano
+  cancel-in-progress: false
 
 jobs:
   mm:
