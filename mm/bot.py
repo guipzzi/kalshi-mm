@@ -209,6 +209,19 @@ def step(c, dry, budget):
     return spent
 
 
+def held(c):
+    """# of strikes in SERIES with a non-zero position (i.e. orders that filled)."""
+    n = 0
+    try:
+        pos = c.positions(limit=200)
+        for p in (pos.get("market_positions", []) if isinstance(pos, dict) else []):
+            if SERIES in (p.get("ticker") or "") and int(p.get("position", 0) or 0) != 0:
+                n += 1
+    except Exception:
+        pass
+    return n
+
+
 def run_loop(dry):
     if not SERIES:
         print("set MM_SERIES (target series ticker) via env/secret."); return
@@ -233,6 +246,9 @@ def run_loop(dry):
                     cancel_all(c, dry=False)
                     return
             print(f"\n[{dt.datetime.now().strftime('%H:%M:%S')}]", flush=True)
+            if not dry:
+                print(f"   held: {held(c)} strikes filled | resting: {len(resting(c))} | "
+                      f"day PnL: {_money(pnl, signed=True)}", flush=True)
             step(c, dry, budget)
         except Exception as e:
             print(f"   ! error: {e}", flush=True)
