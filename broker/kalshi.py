@@ -228,7 +228,7 @@ class KalshiClient:
             "ticker": ticker,
             "side": side,
             "count": str(int(count)),
-            "price": f"{float(price):.4f}",
+            "price": f"{round(float(price), 2):.2f}",   # snap to 1-cent tick (exchange rejects sub-cent)
             "time_in_force": time_in_force,
             "self_trade_prevention_type": self_trade_prevention_type,
         }
