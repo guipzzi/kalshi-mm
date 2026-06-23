@@ -116,15 +116,21 @@ def discover(c):
     return out
 
 
+def _pos(p):
+    """Signed contracts of a market_position. Kalshi V2 uses position_fp (string,
+    negative = NO / short YES, positive = YES); fall back to legacy 'position'."""
+    return float(p.get("position_fp", p.get("position", 0)) or 0)
+
+
 def inventory(c, ticker):
     try:
         pos = c.positions(limit=200)
         for p in (pos.get("market_positions", []) if isinstance(pos, dict) else []):
             if p.get("ticker") == ticker:
-                return int(p.get("position", 0) or 0)
+                return _pos(p)
     except Exception:
         pass
-    return 0
+    return 0.0
 
 
 def resting(c, ticker=None):
@@ -246,7 +252,7 @@ def held(c):
     try:
         pos = c.positions(limit=200)
         for p in (pos.get("market_positions", []) if isinstance(pos, dict) else []):
-            if SERIES in (p.get("ticker") or "") and int(p.get("position", 0) or 0) != 0:
+            if SERIES in (p.get("ticker") or "") and abs(_pos(p)) >= 0.5:
                 n += 1
     except Exception:
         pass
