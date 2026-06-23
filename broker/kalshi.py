@@ -210,29 +210,35 @@ class KalshiClient:
         return self._request("GET", "/portfolio/fills", params=p)
 
     # -- writes (explicit only): sends a real order -------------------------- #
-    def create_order(self, *, ticker: str, side: str, action: str, count: int,
-                     type_: str = "limit",
-                     yes_price: Optional[int] = None,
-                     no_price: Optional[int] = None,
+    def create_order(self, *, ticker: str, side: str, count: int,
+                     price: float,
+                     time_in_force: str = "good_till_canceled",
+                     self_trade_prevention_type: str = "taker_at_cross",
                      client_order_id: Optional[str] = None,
-                     time_in_force: Optional[str] = None,
+                     post_only: bool = False,
                      expiration_ts: Optional[int] = None) -> dict:
-        """POST /portfolio/orders — SENDS A REAL ORDER.
-        side 'yes'|'no' · action 'buy'|'sell' · *_price in cents (1..99).
-        Pass a unique client_order_id for idempotency."""
-        body = {"ticker": ticker, "side": side, "action": action,
-                "count": count, "type": type_}
-        if yes_price is not None:
-            body["yes_price"] = yes_price
-        if no_price is not None:
-            body["no_price"] = no_price
+        """POST /portfolio/events/orders (V2) — SENDS A REAL ORDER.
+
+        Single-book model: side 'bid' (buy YES) | 'ask' (sell YES). count and
+        price are fixed-point strings; price in dollars (0..1). post_only=True
+        forces a passive maker order (rejected if it would cross). expiration_ts
+        (unix seconds) auto-cancels a GTC order. Unique client_order_id = idempotency.
+        """
+        body = {
+            "ticker": ticker,
+            "side": side,
+            "count": str(int(count)),
+            "price": f"{float(price):.4f}",
+            "time_in_force": time_in_force,
+            "self_trade_prevention_type": self_trade_prevention_type,
+        }
+        if post_only:
+            body["post_only"] = True
         if client_order_id:
             body["client_order_id"] = client_order_id
-        if time_in_force:
-            body["time_in_force"] = time_in_force
         if expiration_ts:
-            body["expiration_ts"] = expiration_ts
-        return self._request("POST", "/portfolio/orders", json=body)
+            body["expiration_time"] = int(expiration_ts)
+        return self._request("POST", "/portfolio/events/orders", json=body)
 
     def cancel_order(self, order_id: str) -> dict:
-        return self._request("DELETE", f"/portfolio/orders/{order_id}")
+        return self._request("DELETE", f"/portfolio/events/orders/{order_id}")

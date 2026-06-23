@@ -149,17 +149,18 @@ def cancel_all(c, dry, ticker=None):
 
 
 def desired_quotes(m, inv):
-    """2-sided maker quotes with inventory skew: buy YES at the (shifted) bid and
-    buy NO at (1 - shifted ask). inv>0 shifts down to lean inventory off."""
+    """2-sided maker quotes on the YES book with inventory skew (single-book V2).
+    bid = buy YES at the (shifted) bid; ask = sell YES at the (shifted) ask.
+    inv>0 shifts both down to lean inventory off. px_cost = collateral/contract."""
     half = (m["ask"] - m["bid"]) / 2
     sk = SKEW_MULT * half * (inv / INV_CAP)
     ybid = m["bid"] - sk
     yask = m["ask"] - sk
     orders = []
-    if inv < INV_CAP and 0 < ybid < 1:
-        orders.append({"side": "yes", "price": ybid, "px_cost": ybid})
-    if inv > -INV_CAP and 0 < (1 - yask) < 1:
-        orders.append({"side": "no", "price": 1 - yask, "px_cost": 1 - yask})
+    if inv < INV_CAP and 0 < ybid < 1:                 # bid: buy YES (go long)
+        orders.append({"side": "bid", "price": ybid, "px_cost": ybid})
+    if inv > -INV_CAP and 0 < yask < 1:                # ask: sell YES (go short / long NO)
+        orders.append({"side": "ask", "price": yask, "px_cost": 1 - yask})
     return orders
 
 
@@ -194,15 +195,14 @@ def step(c, dry, budget):
                 print(f"   [exposure cap {_money(budget)}] skip {_mask(m['ticker'])} {o['side']}")
                 continue
             spent += cost
-            tag = f"{_mask(m['ticker'])} buy {o['side']} {QTY}@{_c(o['price'])}c (${o['px_cost']:.2f})"
+            tag = f"{_mask(m['ticker'])} {o['side']} {QTY}@{_c(o['price'])}c (${o['px_cost']:.2f})"
             if dry:
                 print(f"   [dry] would post MAKER (expires {ORDER_EXPIRY_S}s): {tag}")
             else:
-                px = {"yes_price": _c(o["price"])} if o["side"] == "yes" else {"no_price": _c(o["price"])}
                 res = c.create_order(
-                    ticker=m["ticker"], action="buy", side=o["side"], count=QTY,
-                    type_="limit", client_order_id=f"mm-{int(time.time()*1000)}-{o['side']}",
-                    expiration_ts=int(time.time()) + ORDER_EXPIRY_S, **px)
+                    ticker=m["ticker"], side=o["side"], count=QTY, price=o["price"],
+                    post_only=True, client_order_id=f"mm-{int(time.time()*1000)}-{o['side']}",
+                    expiration_ts=int(time.time()) + ORDER_EXPIRY_S)
                 ok = isinstance(res, dict) and not res.get("_http_error") and not res.get("_error")
                 print(f"   [LIVE] {tag} -> {'ok' if ok else res}")
     print(f"   exposure posted this round: ~{_money(spent)}")
