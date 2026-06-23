@@ -1,6 +1,8 @@
 name: mm
 
 on:
+  schedule:
+    - cron: "0 */6 * * *"        # 4x/dia; loop de ~5h50 emenda quase contínuo
   workflow_dispatch:
     inputs:
       mode:
@@ -18,7 +20,7 @@ on:
 
 concurrency:
   group: mm
-  cancel-in-progress: false
+  cancel-in-progress: false       # evita matar um run rodando por engano
 
 jobs:
   mm:
@@ -45,15 +47,15 @@ jobs:
           MM_QTY: ${{ github.event.inputs.qty || '1' }}
           MM_MAX_USD: ${{ github.event.inputs.max_usd || '5' }}
           MM_SKEW: "0.3"
-          LOOP_MAX_MINUTES: ${{ github.event.inputs.minutes || '60' }}
         run: |
-          MODE="${{ github.event.inputs.mode }}"
-          if [ "$MODE" = "live" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            export LOOP_MAX_MINUTES=350
             LIVE=1 python -m mm.bot --live
-          elif [ "$MODE" = "dry" ]; then
-            python -m mm.bot --dry
-          elif [ "$MODE" = "flatten" ]; then
-            python -m mm.bot --flatten
           else
-            python -m mm.bot --status
+            export LOOP_MAX_MINUTES="${{ github.event.inputs.minutes || '60' }}"
+            MODE="${{ github.event.inputs.mode }}"
+            if [ "$MODE" = "live" ]; then LIVE=1 python -m mm.bot --live
+            elif [ "$MODE" = "dry" ]; then python -m mm.bot --dry
+            elif [ "$MODE" = "flatten" ]; then python -m mm.bot --flatten
+            else python -m mm.bot --status; fi
           fi
